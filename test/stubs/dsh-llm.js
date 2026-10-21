@@ -11,7 +11,10 @@ export class LlmError extends Error {
   }
 }
 
-export const CallId = class CallId {};
+export function ToolCallId(id) {
+  return id;
+}
+
 export const ReasoningEffortId = class ReasoningEffortId {};
 export const CONTEXT_WINDOW_EXCEEDED_CODE = "LLM_CONTEXT_WINDOW_EXCEEDED";
 export const EMPTY_RESPONSE_CODE = "LLM_EMPTY_RESPONSE";

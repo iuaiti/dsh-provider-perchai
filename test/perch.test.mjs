@@ -11,6 +11,7 @@ const {
   FileCredentialStore,
   FileModelSettingsStore,
   PerchAdapter,
+  apply,
   loginPerch,
 } = await import("../lib/index.js");
 
@@ -40,6 +41,9 @@ async function startFakePerch() {
       });
       request.on("end", () => {
         state.tokenRequests.push({ body, search: url.search });
+        if (state.failToken) {
+          return json(400, { code: 400, error_code: "invalid_credentials", msg: "unsupported_grant_type" });
+        }
         json(200, {
           access_token: "perch-access-token",
           refresh_token: "perch-refresh-token",
@@ -97,6 +101,7 @@ test("Perch login runs the Supabase PKCE flow and stores the session", async () 
   const store = new FileCredentialStore(join(dir, "perchai-oauth.json"));
 
   const credentials = await loginPerch(
+    store,
     {
       notify(event) {
         assert.equal(event.type, "auth_url");
@@ -121,9 +126,12 @@ test("Perch login runs the Supabase PKCE flow and stores the session", async () 
   assert.equal(credentials.access, "perch-access-token");
   assert.equal(credentials.provider, "google");
   assert.equal(perch.tokenRequests.length, 1);
+  // GoTrue wants the grant type in the query string and the auth code as `auth_code`.
+  assert.equal(perch.tokenRequests[0].search, "?grant_type=pkce");
   const tokenRequest = JSON.parse(perch.tokenRequests[0].body);
-  assert.equal(tokenRequest.grant_type, "pkce");
-  assert.equal(tokenRequest.code, "perch-code");
+  assert.equal(tokenRequest.auth_code, "perch-code");
+  assert.equal(tokenRequest.code, undefined);
+  assert.equal(tokenRequest.code_verifier.length, 43);
   assert.equal(tokenRequest.code_verifier.length, 43);
 
   await store.write(credentials);
@@ -169,5 +177,91 @@ test("adapter streams an OpenAI-compatible chat completion as DSH events", async
   assert.equal(request.model, "perch-test-model");
   assert.equal(request.stream, true);
   assert.deepEqual(request.messages, [{ role: "user", content: "hi" }]);
+  await perch.close();
+});
+
+function fakeRequest(method, url, body) {
+  return {
+    method,
+    url,
+    async *[Symbol.asyncIterator]() {
+      if (body) yield Buffer.from(body);
+    },
+  };
+}
+
+function fakeResponse() {
+  const response = { statusCode: 0, body: "", headers: {} };
+  response.writeHead = (status, headers) => {
+    response.statusCode = status;
+    response.headers = headers;
+  };
+  response.end = (chunk) => {
+    response.body = chunk ? String(chunk) : "";
+  };
+  return response;
+}
+
+/** Register the plugin against a fake Cordis + web server and return the api route. */
+function mountPlugin() {
+  const routes = [];
+  const webCtx = {
+    effect(fn) {
+      return fn();
+    },
+    webServer: {
+      register(route) {
+        routes.push(route);
+        return () => {};
+      },
+    },
+  };
+  const ctx = {
+    llm: { registerAdapter() {} },
+    inject(_names, fn) {
+      fn(webCtx);
+    },
+    emit() {},
+  };
+  apply(ctx);
+  return routes.find((route) => route.path === "/perchai/api");
+}
+
+test("a failed token exchange surfaces in the settings status payload", async () => {
+  const perch = await startFakePerch();
+  const callbackPort = await freePort();
+  process.env.PERCH_APP_URL = perch.base;
+  process.env.PERCH_API_BASE_URL = perch.base;
+  process.env.PERCH_CALLBACK_PORT = String(callbackPort);
+
+  // Supabase rejects a bogus code, exactly like the live project does.
+  perch.failToken = true;
+
+  const route = mountPlugin();
+  assert.ok(route, "the plugin must register its web api route");
+
+  const loginResponse = fakeResponse();
+  await route.handler(fakeRequest("POST", "/perchai/api/login", '{"provider":"google"}'), loginResponse);
+  assert.equal(loginResponse.statusCode, 200);
+  const login = JSON.parse(loginResponse.body).value;
+  assert.equal(login.status, "pending");
+  assert.match(login.authUrl, /\/auth\/v1\/authorize/);
+
+  // The browser comes back with a code; the exchange then fails. The tab the
+  // user is looking at must show that failure, not a bare "callback received".
+  const callbackResponse = await fetch(`http://127.0.0.1:${callbackPort}/callback?code=perch-code`);
+  const callbackBody = await callbackResponse.text();
+  assert.equal(callbackResponse.status, 400);
+  assert.match(callbackBody, /Perch sign-in failed/);
+  assert.match(callbackBody, /token request failed/);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  const statusResponse = fakeResponse();
+  await route.handler(fakeRequest("GET", "/perchai/api/status"), statusResponse);
+  assert.equal(statusResponse.statusCode, 200);
+  const status = JSON.parse(statusResponse.body).value;
+  assert.equal(status.login.status, "error");
+  assert.match(status.login.error, /token request failed/);
+  assert.equal(status.authenticated, false);
   await perch.close();
 });
