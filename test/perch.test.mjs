@@ -18,7 +18,7 @@ const {
 
 /** Fake Perch: auth config, Supabase token endpoint, OpenAI-compatible gateway. */
 async function startFakePerch() {
-  const state = { base: "", authUrl: "", tokenRequests: [], chatRequests: [] };
+  const state = { base: "", authUrl: "", tokenRequests: [], chatRequests: [], ticketRequests: [] };
   const server = createServer((request, response) => {
     const url = new URL(request.url || "/", "http://127.0.0.1");
     const json = (status, body) => {
@@ -54,23 +54,36 @@ async function startFakePerch() {
       });
       return;
     }
-    if (url.pathname === "/models") {
-      return json(200, { object: "list", data: [{ id: "perch-test-model", context_window: 128000 }] });
+    if (url.pathname === "/api/perch-terminal/turn-ticket") {
+      state.ticketRequests.push(request.headers["x-perch-turn-ticket"] ?? null);
+      return json(200, { ok: true, ticket: "perch-turn-ticket", ticketId: "t1", runId: "r1" });
     }
-    if (url.pathname === "/chat/completions") {
+    if (url.pathname === "/api/perch-terminal/model-call") {
       let body = "";
       request.on("data", (chunk) => {
         body += chunk;
       });
       request.on("end", () => {
-        state.chatRequests.push(JSON.parse(body));
+        state.chatRequests.push({ body: JSON.parse(body), ticket: request.headers["x-perch-turn-ticket"] });
         response.writeHead(200, { "content-type": "text/event-stream" });
-        response.write('data: {"choices":[{"delta":{"content":"he"}}]}\n\n');
-        response.write('data: {"choices":[{"delta":{"content":"llo"}}]}\n\n');
+        if (JSON.stringify(JSON.parse(body).request.messages).includes("use the tool")) {
+          response.write(
+            'data: {"type":"tool_call_delta","toolCalls":[{"id":"chatcmpl-tool-1","name":"get_weather","arguments":{"city":"Paris"},"sealed":false,"argumentParseStatus":"parsed_ok"}]}\n\n',
+          );
+          response.write(
+            'data: {"type":"tool_use_end","toolCalls":[{"id":"chatcmpl-tool-1","name":"get_weather","arguments":{"city":"Paris"},"sealed":true,"argumentParseStatus":"parsed_ok"}]}\n\n',
+          );
+          response.write(
+            'data: {"type":"done","ok":true,"text":"","finishReason":"tool_use","usage":{"inputTokens":7,"outputTokens":2}}\n\n',
+          );
+          response.end();
+          return;
+        }
+        response.write('data: {"type":"answer_delta","text":"he"}\n\n');
+        response.write('data: {"type":"answer_delta","text":"llo"}\n\n');
         response.write(
-          'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":11,"completion_tokens":3}}\n\n',
+          'data: {"type":"done","ok":true,"text":"hello","finishReason":"stop","usage":{"inputTokens":11,"outputTokens":3,"cacheReadInputTokens":0}}\n\n',
         );
-        response.write("data: [DONE]\n\n");
         response.end();
       });
       return;
@@ -141,7 +154,7 @@ test("Perch login runs the Supabase PKCE flow and stores the session", async () 
   await perch.close();
 });
 
-test("adapter streams an OpenAI-compatible chat completion as DSH events", async () => {
+test("adapter streams a Perch hosted-model turn as DSH events", async () => {
   const perch = await startFakePerch();
   process.env.PERCH_APP_URL = perch.base;
   process.env.PERCH_API_BASE_URL = perch.base;
@@ -159,7 +172,7 @@ test("adapter streams an OpenAI-compatible chat completion as DSH events", async
 
   const events = [];
   for await (const event of adapter.stream({
-    model: "perch-test-model",
+    model: "azure-foundry-gpt-6-1-sol",
     messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
   })) {
     events.push(event);
@@ -174,10 +187,12 @@ test("adapter streams an OpenAI-compatible chat completion as DSH events", async
   assert.deepEqual(events[4].usage, { inputTokens: 11, outputTokens: 3 });
   assert.deepEqual(events[5].reason, { kind: "stop" });
 
-  const request = perch.chatRequests[0];
-  assert.equal(request.model, "perch-test-model");
-  assert.equal(request.stream, true);
-  assert.deepEqual(request.messages, [{ role: "user", content: "hi" }]);
+  // The hosted-model gate wants a turn ticket on every call.
+  assert.equal(perch.chatRequests[0].ticket, "perch-turn-ticket");
+  const request = perch.chatRequests[0].body;
+  assert.equal(request.manualModelOptionId, "azure-foundry-gpt-6-1-sol");
+  assert.equal(request.lane, "chat");
+  assert.deepEqual(request.request.messages, [{ role: "user", content: [{ type: "text", text: "hi" }] }]);
   await perch.close();
 });
 
@@ -320,5 +335,38 @@ test("the gateway endpoint is settable and an HTML reply reads as a wrong endpoi
   // dumped into the chat as markup.
   const summary = summarizeErrorBody("<!DOCTYPE html><html lang=\"en\"><head></head></html>");
   assert.match(summary, /HTML/);
+  await perch.close();
+});
+
+test("a Perch tool call reaches the harness as a tool-call block", async () => {
+  const perch = await startFakePerch();
+  process.env.PERCH_APP_URL = perch.base;
+  process.env.PERCH_API_BASE_URL = perch.base;
+
+  const dir = await mkdtemp(join(tmpdir(), "dsh-perch-"));
+  const store = new FileCredentialStore(join(dir, "perchai-oauth.json"));
+  await store.write({
+    access: "perch-access-token",
+    refresh: "perch-refresh-token",
+    expires: Date.now() + 3600_000,
+    email: "pilot@perchai.app",
+  });
+  const settings = new FileModelSettingsStore(join(dir, "perchai-settings.json"));
+  const adapter = new PerchAdapter(store, settings);
+
+  const events = [];
+  for await (const event of adapter.stream({
+    model: "azure-foundry-gpt-6-1-sol",
+    messages: [{ role: "user", content: [{ type: "text", text: "use the tool" }] }],
+  })) {
+    events.push(event);
+  }
+
+  const toolCall = events.find((event) => event.type === "tool-call-delta");
+  assert.ok(toolCall, "expected a tool-call-delta chunk");
+  assert.equal(toolCall.name, "get_weather");
+  assert.match(toolCall.argumentsDelta, /Paris/);
+  const finish = events.find((event) => event.type === "finish");
+  assert.equal(finish.reason.kind, "tool-calls");
   await perch.close();
 });
