@@ -40,12 +40,17 @@ dsh web
 
 | 变量 | 默认值 | 含义 |
 |---|---|---|
-| `PERCH_API_BASE_URL` | `https://chat.perchai.app/api/perch/v1` | OpenAI 兼容网关地址 |
+| `PERCH_API_BASE_URL` | `https://chat.perchai.app` | Perch 应用地址（网关路径挂在它下面） |
 | `PERCH_APP_URL` | `https://app.perchai.app` | 提供 `/api/perch-terminal/cli-auth/config` 的主机 |
 | `PERCH_WEB_URL` | `https://chat.perchai.app` | Perch 网页端（浏览器登录） |
 | `PERCH_CALLBACK_PORT` | `51121` | 接收 OAuth 回跳的本地端口 |
 
-网关需要接受 Perch 会话令牌（`Authorization: Bearer <access token>`），并支持 OpenAI chat-completions 协议（`GET /models`、`POST /chat/completions`、SSE 流式）。
+Perch 没有 OpenAI 兼容的 `/v1` 接口：托管模型要走它自己的网关，每次调用先换一张 turn ticket。
+
+- `POST {base}/api/perch-terminal/turn-ticket` — 换 turn ticket，会话令牌放 `Authorization: Bearer <access token>`。
+- `POST {base}/api/perch-terminal/model-call` — 发这一轮，ticket 放 `x-perch-turn-ticket`，模型 option id 放 `manualModelOptionId`。返回是 Perch 事件流（`answer_delta`、`reasoning_delta`、`tool_call_delta`、`tool_use_end`、`done`），工具调用用 OpenAI function-call 格式。
+
+网关地址也可以在 **Settings > Perch AI** 里改（填应用根地址或完整的 `/api/perch-terminal/model-call` 路径都行）。
 
 ## 登录
 
@@ -67,7 +72,7 @@ node "$DSH_HOME/profiles/web/node_modules/dsh-perchai/bin/perchai-login.mjs" --l
 
 ## 模型
 
-模型列表来自网关（`GET {PERCH_API_BASE_URL}/models`）。在 **设置 > Perch AI > 模型选择器** 中勾选需要的模型，只有被启用的模型才会出现在 DSH 模型选择器的 **Perch AI** 提供方下。
+网关不提供模型列表，插件内置 Perch 的托管模型选项（网关就是按这些 id 路由的）。在 **设置 > Perch AI > 模型选择器** 中勾选需要的模型，只有被启用的模型才会出现在 DSH 模型选择器的 **Perch AI** 提供方下。
 
 网关不可用时，插件会回退到内置的少量模型，保证选择器不为空。
 
@@ -76,7 +81,7 @@ node "$DSH_HOME/profiles/web/node_modules/dsh-perchai/bin/perchai-login.mjs" --l
 插件独占 `perchai` 这条 provider 路由，因此它暴露的模型列表属于 harness 拓扑的一部分：
 
 - 勾选/取消模型会重新注册路由集合，触发 harness 全局的 `llm/adapters-updated` 事件；remote bridge 转发后，DSH web 端会重新加载模型目录，模型选择器随即同步。
-- 后台每分钟重新读取一次 `GET {PERCH_API_BASE_URL}/models`，有变化同样广播，Perch 网关新增/下线的模型无需重启 DSH 就能出现。
+- 设置页每 30 秒轮询一次插件自己的状态，两个界面显示的状态始终一致。
 - 设置页自身也监听 client 通道上的 `llm/adapters-updated` 并刷新列表，两个界面状态始终一致。
 
 ## License

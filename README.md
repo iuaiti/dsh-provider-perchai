@@ -7,7 +7,7 @@ Perch AI model provider for [DeepSeek Harness](https://github.com/deepseek-ai/de
 This is a DSH Web plugin. It registers a DSH `LlmAdapter` under provider route
 `perchai`, signs the user in with **Perch AI's own OAuth** (the same Supabase
 PKCE flow the official `perch login` CLI uses), stores the session under DSH
-home, and talks to the Perch OpenAI-compatible gateway.
+home, and talks to Perch's hosted-model gateway.
 
 > Perch AI is a separate product with its own accounts and plans. This plugin
 > only uses the account you sign in with here.
@@ -42,14 +42,24 @@ dsh web
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PERCH_API_BASE_URL` | `https://chat.perchai.app/api/perch/v1` | OpenAI-compatible gateway base URL |
+| `PERCH_API_BASE_URL` | `https://chat.perchai.app` | Perch app base URL (the gateway paths hang off it) |
 | `PERCH_APP_URL` | `https://app.perchai.app` | Host serving `/api/perch-terminal/cli-auth/config` |
 | `PERCH_WEB_URL` | `https://chat.perchai.app` | Perch web app (browser sign-in) |
 | `PERCH_CALLBACK_PORT` | `51121` | Loopback port that receives the OAuth redirect |
 
-The gateway must accept the Perch session token as `Authorization: Bearer <access token>`
-and speak the OpenAI chat-completions protocol (`GET /models`, `POST /chat/completions`,
-SSE streaming).
+Perch has no OpenAI-compatible `/v1` surface: hosted model access runs through
+its own gateway, which is gated by a per-turn ticket.
+
+- `POST {base}/api/perch-terminal/turn-ticket` — mints the turn ticket; the
+  session token goes in as `Authorization: Bearer <access token>`.
+- `POST {base}/api/perch-terminal/model-call` — the turn itself, with the
+  ticket in `x-perch-turn-ticket` and the model option id in
+  `manualModelOptionId`. The answer is an SSE stream of Perch events
+  (`answer_delta`, `reasoning_delta`, `tool_call_delta`, `tool_use_end`,
+  `done`); tool calls use the OpenAI function-call shape.
+
+The base URL is also editable in **Settings > Perch AI** (it accepts the app
+root or the full `/api/perch-terminal/model-call` route).
 
 ## Login
 
@@ -75,12 +85,10 @@ node "$DSH_HOME/profiles/web/node_modules/dsh-perchai/bin/perchai-login.mjs" --l
 
 ## Models
 
-The model list comes from the gateway (`GET {PERCH_API_BASE_URL}/models`).
-Enable the models you want in **Settings > Perch AI > Model Selector**; only
-enabled models show up in DSH's model picker under the **Perch AI** provider.
-
-If the gateway cannot be reached, the plugin falls back to a small built-in
-list so the picker is never empty.
+The gateway exposes no model list, so the plugin ships Perch's hosted model
+options (the ids the gateway routes on). Enable the models you want in
+**Settings > Perch AI > Model Selector**; only enabled models show up in DSH's
+model picker under the **Perch AI** provider.
 
 ## Realtime model topology
 
@@ -91,9 +99,8 @@ part of the harness topology:
   the harness-wide `llm/adapters-updated` event. The remote bridge forwards it
   and the DSH web client reloads its model catalog, so the model picker follows
   the settings page immediately.
-- A background poll re-reads `GET {PERCH_API_BASE_URL}/models` every minute and
-  announces the change the same way, so models added or removed on the Perch
-  gateway appear in DSH without a restart.
+- The settings page polls the plugin's own status every 30 seconds, so both
+  surfaces keep showing the same state.
 - The settings page itself listens for `llm/adapters-updated` on the client
   channel and refreshes its own list, so both surfaces show the same state.
 
