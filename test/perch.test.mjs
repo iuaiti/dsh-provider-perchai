@@ -205,6 +205,7 @@ function fakeResponse() {
 /** Register the plugin against a fake Cordis + web server and return the api route. */
 function mountPlugin() {
   const routes = [];
+  const announcements = [];
   const webCtx = {
     effect(fn) {
       return fn();
@@ -217,14 +218,21 @@ function mountPlugin() {
     },
   };
   const ctx = {
-    llm: { registerAdapter() {} },
+    llm: {
+      registerAdapter(providers) {
+        announcements.push(providers);
+        const handle = () => {};
+        handle.replace = (next) => announcements.push(next);
+        return handle;
+      },
+    },
     inject(_names, fn) {
       fn(webCtx);
     },
     emit() {},
   };
   apply(ctx);
-  return routes.find((route) => route.path === "/perchai/api");
+  return { route: routes.find((route) => route.path === "/perchai/api"), announcements };
 }
 
 test("a failed token exchange surfaces in the settings status payload", async () => {
@@ -237,7 +245,7 @@ test("a failed token exchange surfaces in the settings status payload", async ()
   // Supabase rejects a bogus code, exactly like the live project does.
   perch.failToken = true;
 
-  const route = mountPlugin();
+  const { route } = mountPlugin();
   assert.ok(route, "the plugin must register its web api route");
 
   const loginResponse = fakeResponse();
@@ -263,5 +271,27 @@ test("a failed token exchange surfaces in the settings status payload", async ()
   assert.equal(status.login.status, "error");
   assert.match(status.login.error, /token request failed/);
   assert.equal(status.authenticated, false);
+  await perch.close();
+});
+
+test("enabling a model announces the new topology to the harness", async () => {
+  const perch = await startFakePerch();
+  process.env.PERCH_APP_URL = perch.base;
+  process.env.PERCH_API_BASE_URL = perch.base;
+
+  const { route, announcements } = mountPlugin();
+  assert.deepEqual(announcements[0], ["perchai"]);
+
+  const response = fakeResponse();
+  await route.handler(
+    fakeRequest("POST", "/perchai/api/models", '{"enabledModelIds":["perch-test-model"]}'),
+    response,
+  );
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body).value.enabledModelIds, ["perch-test-model"]);
+
+  // The route set is re-registered so the harness publishes
+  // `llm/adapters-updated` and the DSH web model picker reloads.
+  assert.deepEqual(announcements[announcements.length - 1], ["perchai"]);
   await perch.close();
 });

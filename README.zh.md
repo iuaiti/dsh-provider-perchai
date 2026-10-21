@@ -71,6 +71,14 @@ node "$DSH_HOME/profiles/web/node_modules/dsh-perchai/bin/perchai-login.mjs" --l
 
 网关不可用时，插件会回退到内置的少量模型，保证选择器不为空。
 
+## 模型拓扑实时同步
+
+插件独占 `perchai` 这条 provider 路由，因此它暴露的模型列表属于 harness 拓扑的一部分：
+
+- 勾选/取消模型会重新注册路由集合，触发 harness 全局的 `llm/adapters-updated` 事件；remote bridge 转发后，DSH web 端会重新加载模型目录，模型选择器随即同步。
+- 后台每分钟重新读取一次 `GET {PERCH_API_BASE_URL}/models`，有变化同样广播，Perch 网关新增/下线的模型无需重启 DSH 就能出现。
+- 设置页自身也监听 client 通道上的 `llm/adapters-updated` 并刷新列表，两个界面状态始终一致。
+
 ## 开发
 
 ```sh

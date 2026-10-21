@@ -82,6 +82,21 @@ enabled models show up in DSH's model picker under the **Perch AI** provider.
 If the gateway cannot be reached, the plugin falls back to a small built-in
 list so the picker is never empty.
 
+## Realtime model topology
+
+The plugin owns the `perchai` provider route, so the model list it exposes is
+part of the harness topology:
+
+- Enabling or disabling a model re-registers the route set, which publishes
+  the harness-wide `llm/adapters-updated` event. The remote bridge forwards it
+  and the DSH web client reloads its model catalog, so the model picker follows
+  the settings page immediately.
+- A background poll re-reads `GET {PERCH_API_BASE_URL}/models` every minute and
+  announces the change the same way, so models added or removed on the Perch
+  gateway appear in DSH without a restart.
+- The settings page itself listens for `llm/adapters-updated` on the client
+  channel and refreshes its own list, so both surfaces show the same state.
+
 ## Development
 
 ```sh
