@@ -13,6 +13,7 @@ const {
   PerchAdapter,
   apply,
   loginPerch,
+  summarizeErrorBody,
 } = await import("../lib/index.js");
 
 /** Fake Perch: auth config, Supabase token endpoint, OpenAI-compatible gateway. */
@@ -293,5 +294,31 @@ test("enabling a model announces the new topology to the harness", async () => {
   // The route set is re-registered so the harness publishes
   // `llm/adapters-updated` and the DSH web model picker reloads.
   assert.deepEqual(announcements[announcements.length - 1], ["perchai"]);
+  await perch.close();
+});
+
+test("the gateway endpoint is settable and an HTML reply reads as a wrong endpoint", async () => {
+  const perch = await startFakePerch();
+  process.env.PERCH_APP_URL = perch.base;
+  process.env.PERCH_API_BASE_URL = perch.base;
+
+  const { route } = mountPlugin();
+  const response = fakeResponse();
+  await route.handler(
+    fakeRequest("POST", "/perchai/api/endpoint", JSON.stringify({ apiBaseUrl: `${perch.base}/gateway/v1` })),
+    response,
+  );
+  assert.equal(response.statusCode, 200);
+  const value = JSON.parse(response.body).value;
+  assert.equal(value.apiBaseUrl, `${perch.base}/gateway/v1`);
+
+  const invalid = fakeResponse();
+  await route.handler(fakeRequest("POST", "/perchai/api/endpoint", '{"apiBaseUrl":"ftp://x"}'), invalid);
+  assert.equal(invalid.statusCode, 500);
+
+  // The web app answers unknown paths with its HTML shell; that must not be
+  // dumped into the chat as markup.
+  const summary = summarizeErrorBody("<!DOCTYPE html><html lang=\"en\"><head></head></html>");
+  assert.match(summary, /HTML/);
   await perch.close();
 });
