@@ -42,7 +42,7 @@ dsh web
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PERCH_API_BASE_URL` | `https://chat.perchai.app` | Perch app base URL (the gateway paths hang off it) |
+| `PERCH_API_BASE_URL` | `https://app.perchai.app` | Perch app base URL (the gateway paths hang off it) |
 | `PERCH_APP_URL` | `https://app.perchai.app` | Host serving `/api/perch-terminal/cli-auth/config` |
 | `PERCH_WEB_URL` | `https://chat.perchai.app` | Perch web app (browser sign-in) |
 | `PERCH_CALLBACK_PORT` | `51121` | Loopback port that receives the OAuth redirect |

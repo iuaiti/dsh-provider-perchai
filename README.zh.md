@@ -40,7 +40,7 @@ dsh web
 
 | 变量 | 默认值 | 含义 |
 |---|---|---|
-| `PERCH_API_BASE_URL` | `https://chat.perchai.app` | Perch 应用地址（网关路径挂在它下面） |
+| `PERCH_API_BASE_URL` | `https://app.perchai.app` | Perch 应用地址（网关路径挂在它下面） |
 | `PERCH_APP_URL` | `https://app.perchai.app` | 提供 `/api/perch-terminal/cli-auth/config` 的主机 |
 | `PERCH_WEB_URL` | `https://chat.perchai.app` | Perch 网页端（浏览器登录） |
 | `PERCH_CALLBACK_PORT` | `51121` | 接收 OAuth 回跳的本地端口 |
