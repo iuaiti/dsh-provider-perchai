@@ -15,7 +15,7 @@ home, and talks to the Perch OpenAI-compatible gateway.
 ## Install into DSH Web
 
 ```sh
-dsh plugin --profile web add ./dist/dsh-perchai-0.1.0.tgz
+dsh plugin --profile web add github:iuaiti/dsh-provider-perchai
 ```
 
 Or copy the package into the Web profile manually:
@@ -97,14 +97,6 @@ part of the harness topology:
 - The settings page itself listens for `llm/adapters-updated` on the client
   channel and refreshes its own list, so both surfaces show the same state.
 
-## Development
-
-```sh
-npm run check   # syntax check
-npm test        # offline tests (fake Perch + fake gateway)
-```
-
 ## License
 
 MIT
-# dsh-provider-perchai
