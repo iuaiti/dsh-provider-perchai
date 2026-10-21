@@ -13,7 +13,7 @@
 ## 安装到 DSH Web
 
 ```sh
-dsh plugin --profile web add github:iuaiti/dsh-provider-perchai
+dsh plugin --profile web add ./dist/dsh-perchai-0.1.0.tgz
 ```
 
 也可以手动复制到 Web profile：
@@ -78,6 +78,13 @@ node "$DSH_HOME/profiles/web/node_modules/dsh-perchai/bin/perchai-login.mjs" --l
 - 勾选/取消模型会重新注册路由集合，触发 harness 全局的 `llm/adapters-updated` 事件；remote bridge 转发后，DSH web 端会重新加载模型目录，模型选择器随即同步。
 - 后台每分钟重新读取一次 `GET {PERCH_API_BASE_URL}/models`，有变化同样广播，Perch 网关新增/下线的模型无需重启 DSH 就能出现。
 - 设置页自身也监听 client 通道上的 `llm/adapters-updated` 并刷新列表，两个界面状态始终一致。
+
+## 开发
+
+```sh
+npm run check   # 语法检查
+npm test        # 离线测试（假的 Perch + 假的网关）
+```
 
 ## License
 
