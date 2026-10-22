@@ -18,7 +18,7 @@ const {
 
 /** Fake Perch: auth config, Supabase token endpoint, OpenAI-compatible gateway. */
 async function startFakePerch() {
-  const state = { base: "", authUrl: "", tokenRequests: [], chatRequests: [], ticketRequests: [] };
+  const state = { base: "", authUrl: "", tokenRequests: [], chatRequests: [], ticketRequests: [], openAiRequests: [] };
   const server = createServer((request, response) => {
     const url = new URL(request.url || "/", "http://127.0.0.1");
     const json = (status, body) => {
@@ -51,6 +51,26 @@ async function startFakePerch() {
           expires_at: Math.floor(Date.now() / 1000) + 3600,
           user: { id: "user-1", email: "pilot@perchai.app" },
         });
+      });
+      return;
+    }
+    if (url.pathname === "/models") {
+      return json(200, { object: "list", data: [{ id: "gpt-4o-mini", context_window: 128000 }] });
+    }
+    if (url.pathname === "/chat/completions") {
+      let body = "";
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        state.openAiRequests.push({ body: JSON.parse(body), headers: request.headers });
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.write('data: {"choices":[{"delta":{"content":"he"}}]}\n\n');
+        response.write('data: {"choices":[{"delta":{"content":"llo"}}]}\n\n');
+        response.write(
+          'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":11,"completion_tokens":3}}\n\n',
+        );
+        response.end();
       });
       return;
     }
@@ -168,6 +188,7 @@ test("adapter streams a Perch hosted-model turn as DSH events", async () => {
     email: "pilot@perchai.app",
   });
   const settings = new FileModelSettingsStore(join(dir, "perchai-settings.json"));
+  await settings.write({ mode: "perch", apiBaseUrl: perch.base });
   const adapter = new PerchAdapter(store, settings);
 
   const events = [];
@@ -352,6 +373,7 @@ test("a Perch tool call reaches the harness as a tool-call block", async () => {
     email: "pilot@perchai.app",
   });
   const settings = new FileModelSettingsStore(join(dir, "perchai-settings.json"));
+  await settings.write({ mode: "perch", apiBaseUrl: perch.base });
   const adapter = new PerchAdapter(store, settings);
 
   const events = [];
@@ -368,5 +390,35 @@ test("a Perch tool call reaches the harness as a tool-call block", async () => {
   assert.match(toolCall.argumentsDelta, /Paris/);
   const finish = events.find((event) => event.type === "finish");
   assert.equal(finish.reason.kind, "tool-calls");
+  await perch.close();
+});
+
+test("the OpenAI-compatible mode talks to the user's own endpoint", async () => {
+  const perch = await startFakePerch();
+  process.env.PERCH_APP_URL = perch.base;
+
+  const dir = await mkdtemp(join(tmpdir(), "dsh-perch-"));
+  const store = new FileCredentialStore(join(dir, "perchai-oauth.json"));
+  await store.write({
+    access: "perch-access-token",
+    refresh: "perch-refresh-token",
+    expires: Date.now() + 3600_000,
+    email: "pilot@perchai.app",
+  });
+  const settings = new FileModelSettingsStore(join(dir, "perchai-settings.json"));
+  await settings.write({ mode: "openai", apiBaseUrl: perch.base, apiKey: "sk-user-key" });
+  const adapter = new PerchAdapter(store, settings);
+
+  const events = [];
+  for await (const event of adapter.stream({
+    model: "gpt-4o-mini",
+    messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+  })) {
+    events.push(event);
+  }
+
+  assert.equal(events[1].text + events[2].text, "hello");
+  assert.deepEqual(perch.openAiRequests[0].headers.authorization, "Bearer sk-user-key");
+  assert.equal(perch.openAiRequests[0].body.model, "gpt-4o-mini");
   await perch.close();
 });

@@ -42,13 +42,17 @@ dsh web
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PERCH_API_BASE_URL` | `https://app.perchai.app` | Perch app base URL (the gateway paths hang off it) |
+| `PERCH_API_BASE_URL` | `https://app.perchai.app` | Perch-hosted gateway base URL (the gateway paths hang off it) |
 | `PERCH_APP_URL` | `https://app.perchai.app` | Host serving `/api/perch-terminal/cli-auth/config` |
 | `PERCH_WEB_URL` | `https://chat.perchai.app` | Perch web app (browser sign-in) |
 | `PERCH_CALLBACK_PORT` | `51121` | Loopback port that receives the OAuth redirect |
 
+The plugin has two model sources, chosen in **Settings > Perch AI**:
+
+**Perch-hosted models** (the account's own models, metered by Perch)
+
 Perch has no OpenAI-compatible `/v1` surface: hosted model access runs through
-its own gateway, which is gated by a per-turn ticket.
+its own gateway, gated by a per-turn ticket.
 
 - `POST {base}/api/perch-terminal/turn-ticket` — mints the turn ticket; the
   session token goes in as `Authorization: Bearer <access token>`.
@@ -58,8 +62,16 @@ its own gateway, which is gated by a per-turn ticket.
   (`answer_delta`, `reasoning_delta`, `tool_call_delta`, `tool_use_end`,
   `done`); tool calls use the OpenAI function-call shape.
 
-The base URL is also editable in **Settings > Perch AI** (it accepts the app
-root or the full `/api/perch-terminal/model-call` route).
+Perch limits hosted models to its own Web/Desktop/CLI surfaces: an account
+without direct API access gets `403 perch_surface_required` here.
+
+**Your own key** (any OpenAI-compatible endpoint)
+
+The "bring your own key" path Perch documents: set a base URL, an API key and
+pick the models. The plugin then speaks plain `POST {base}/chat/completions`
+(SSE) and reads the model list from `GET {base}/models`. Both the `Authorization:
+Bearer` and `api-key` headers are sent when a key is set, so OpenAI-style and
+Azure-style gateways both work; a keyless local gateway works too.
 
 ## Login
 
@@ -85,8 +97,9 @@ node "$DSH_HOME/profiles/web/node_modules/dsh-perchai/bin/perchai-login.mjs" --l
 
 ## Models
 
-The gateway exposes no model list, so the plugin ships Perch's hosted model
-options (the ids the gateway routes on). Enable the models you want in
+Perch exposes no model list, so in the hosted mode the plugin ships Perch's
+model options (the ids the gateway routes on). In the own-key mode the model
+list comes from `GET {base}/models`. Enable the models you want in
 **Settings > Perch AI > Model Selector**; only enabled models show up in DSH's
 model picker under the **Perch AI** provider.
 
