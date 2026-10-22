@@ -40,17 +40,27 @@ dsh web
 
 | 变量 | 默认值 | 含义 |
 |---|---|---|
-| `PERCH_API_BASE_URL` | `https://app.perchai.app` | Perch 应用地址（网关路径挂在它下面） |
+| `PERCH_API_BASE_URL` | `https://app.perchai.app` | Perch 托管网关地址（网关路径挂在它下面） |
 | `PERCH_APP_URL` | `https://app.perchai.app` | 提供 `/api/perch-terminal/cli-auth/config` 的主机 |
 | `PERCH_WEB_URL` | `https://chat.perchai.app` | Perch 网页端（浏览器登录） |
 | `PERCH_CALLBACK_PORT` | `51121` | 接收 OAuth 回跳的本地端口 |
+
+插件有两种模型来源，在 **设置 > Perch AI** 里切换。
+
+**Perch 托管模型**（Perch 自己的模型，计入 Perch 用量）
 
 Perch 没有 OpenAI 兼容的 `/v1` 接口：托管模型要走它自己的网关，每次调用先换一张 turn ticket。
 
 - `POST {base}/api/perch-terminal/turn-ticket` — 换 turn ticket，会话令牌放 `Authorization: Bearer <access token>`。
 - `POST {base}/api/perch-terminal/model-call` — 发这一轮，ticket 放 `x-perch-turn-ticket`，模型 option id 放 `manualModelOptionId`。返回是 Perch 事件流（`answer_delta`、`reasoning_delta`、`tool_call_delta`、`tool_use_end`、`done`），工具调用用 OpenAI function-call 格式。
 
-网关地址也可以在 **Settings > Perch AI** 里改（填应用根地址或完整的 `/api/perch-terminal/model-call` 路径都行）。
+Perch 只允许自家 Web/Desktop/CLI 直接调用托管模型：没有 direct API access 的账号在这里会拿到 `403 perch_surface_required`。
+
+**自带 Key**（任意 OpenAI 兼容地址）
+
+就是 Perch 文档里的 "bring your own key"：填 base URL、API key，再勾模型。插件改用标准 `POST {base}/chat/completions`（SSE），模型列表读 `GET {base}/models`。有 key 时同时发 `Authorization: Bearer` 和 `api-key` 两个头，OpenAI 风格和 Azure 风格的网关都能用；本地无 key 的网关也能用。
+
+网关地址在 **设置 > Perch AI** 里改（托管模式填应用根地址或完整的 `/api/perch-terminal/model-call` 路径都行）。
 
 ## 登录
 
@@ -72,7 +82,7 @@ node "$DSH_HOME/profiles/web/node_modules/dsh-perchai/bin/perchai-login.mjs" --l
 
 ## 模型
 
-网关不提供模型列表，插件内置 Perch 的托管模型选项（网关就是按这些 id 路由的）。在 **设置 > Perch AI > 模型选择器** 中勾选需要的模型，只有被启用的模型才会出现在 DSH 模型选择器的 **Perch AI** 提供方下。
+托管模式下模型列表来自插件内置的 Perch 模型选项（网关就是按这些 id 路由的），自带 Key 模式下来自 `GET {base}/models`。在 **设置 > Perch AI > 模型选择器** 中勾选需要的模型，只有被启用的模型才会出现在 DSH 模型选择器的 **Perch AI** 提供方下。
 
 网关不可用时，插件会回退到内置的少量模型，保证选择器不为空。
 
